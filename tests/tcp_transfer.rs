@@ -62,3 +62,51 @@ fn end_to_end_tcp_transfer_round_trip() {
     let on_disk = std::fs::read(&landed).unwrap();
     assert_eq!(sha256_hex(&on_disk), expected_sha);
 }
+
+#[test]
+fn dotted_blueprint_name_keeps_full_stem() {
+    let workdir = TempDir::new().unwrap();
+    let craft_path = workdir.path().join("Rocket v2.0.craft");
+    let body = b"ship = Rocket v2.0\nversion = 1.12.5\ntype = VAB\nPART\n{ name=core }\n";
+    std::fs::write(&craft_path, body).unwrap();
+    let craft = CraftFile::load(&craft_path).unwrap();
+    assert_eq!(craft.metadata.name, "Rocket v2.0");
+
+    let out_dir = workdir.path().join("received");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let port = 47875u16;
+    let recv_opts = ReceiveOptions {
+        connect_to: None,
+        bind: local_addr(port),
+        listen: true,
+        output_dir: Some(out_dir.clone()),
+        ksp_install: None,
+        auto_accept: true,
+    };
+    let recv_thread = thread::spawn(move || receive_blueprint(&recv_opts));
+    thread::sleep(Duration::from_millis(100));
+
+    let send_opts = SendOptions {
+        bind: local_addr(0),
+        connect_to: Some(local_addr(port)),
+    };
+    send_blueprint(&craft, &send_opts).expect("sender failed");
+    recv_thread
+        .join()
+        .expect("recv panicked")
+        .expect("recv failed");
+
+    let landed: PathBuf = out_dir.join("Rocket v2.0.craft");
+    assert!(
+        landed.exists(),
+        "expected dotted blueprint at {}; out dir contains: {:?}",
+        landed.display(),
+        std::fs::read_dir(&out_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>()
+    );
+    let on_disk = std::fs::read(&landed).unwrap();
+    assert_eq!(sha256_hex(&on_disk), sha256_hex(body));
+}
