@@ -13,10 +13,11 @@ Receiver:  ksp-share receive --from <ip:port>
 No accounts, no cloud, no upload step — the file goes straight from one
 machine to another over TCP, with a SHA-256 integrity check at the end.
 
-This repository implements **stages 0–3a** of the
-[project plan](./docs/protocol.md): bootstrap, TCP MVP, KSP integration
-and LAN auto-discovery via mDNS. Stages 3b+ (QUIC P2P with relay
-fallback, GUI) are tracked in the [Roadmap](#roadmap) below.
+This repository implements **stages 0–3b** of the
+[project plan](./docs/protocol.md): bootstrap, TCP MVP, KSP
+integration, LAN auto-discovery via mDNS and a QUIC P2P transport
+with relay fallback (opt-in via the `p2p` Cargo feature). Stage 4
+(GUI) is tracked in the [Roadmap](#roadmap) below.
 
 ## Status
 
@@ -30,7 +31,7 @@ fallback, GUI) are tracked in the [Roadmap](#roadmap) below.
 - [x] `.craft` metadata parser for KSP1 and KSP2
 - [x] CI + cross-platform release pipeline
 - [x] LAN mDNS auto-discovery (stage 3a)
-- [ ] QUIC + relay P2P transport (stage 3b)
+- [x] QUIC + relay P2P transport (stage 3b, behind the `p2p` feature)
 - [ ] GUI (stage 4)
 
 ## Install
@@ -113,6 +114,27 @@ ksp-share discover --timeout 0
 See [`docs/discovery.md`](./docs/discovery.md) for the service type,
 TXT record schema and tips on running mDNS through firewalls.
 
+### Sharing across the internet (QUIC P2P)
+
+When the two peers aren't on the same LAN, build with the `p2p`
+feature for an [iroh](https://crates.io/crates/iroh)-based QUIC
+transport with NAT hole-punching and relay fallback:
+
+```sh
+cargo build --release --features p2p
+
+# Sender prints a ticket
+./target/release/ksp-share send "Mun Rocket III" --p2p
+# iroh endpoint online — share this ticket with the receiver:
+#   ksp-share://...?relay=...&direct=...
+
+# Receiver dials it
+./target/release/ksp-share receive --ticket 'ksp-share://...' --yes
+```
+
+See [`docs/p2p.md`](./docs/p2p.md) for the ticket format, security
+caveats and notes on the relay servers.
+
 ### Inspecting the detected install
 
 ```sh
@@ -129,7 +151,7 @@ Set the `KSP_ROOT` environment variable to override detection.
 | 1     | TCP MVP, SHA-256, progress bar                     | ✅ done      |
 | 2     | KSP install detector, `list`, send-by-name         | ✅ done      |
 | 3a    | LAN auto-discovery via mDNS                        | ✅ done      |
-| 3b    | QUIC P2P, relay fallback                           | 🟡 planned  |
+| 3b    | QUIC P2P, relay fallback (`--features p2p`)         | ✅ done      |
 | 4     | GUI (`egui`/`eframe`), drag-and-drop               | 🟡 planned  |
 
 ## Contributing

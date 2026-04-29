@@ -64,6 +64,13 @@ pub struct SendArgs {
     /// Don't publish a `_ksp-share._tcp.local.` mDNS record.
     #[arg(long = "no-mdns")]
     pub no_mdns: bool,
+
+    /// Use the iroh QUIC transport instead of plain TCP. Prints a
+    /// peer ticket to share with the receiver and accepts a single
+    /// inbound connection. Requires the binary to be built with
+    /// `--features p2p`.
+    #[arg(long = "p2p")]
+    pub p2p: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -91,6 +98,12 @@ pub struct ReceiveArgs {
     /// How long to browse for LAN announcements before giving up.
     #[arg(long = "discover-timeout", default_value_t = 4u64)]
     pub discover_timeout_secs: u64,
+
+    /// Connect via iroh QUIC using the given peer ticket from
+    /// `ksp-share send --p2p`. Requires the binary to be built with
+    /// `--features p2p`.
+    #[arg(long = "ticket")]
+    pub ticket: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -146,6 +159,10 @@ fn cmd_send(args: SendArgs) -> Result<()> {
         craft.metadata.name, craft.metadata.size_bytes, ship_label
     );
 
+    if args.p2p {
+        return cmd_send_p2p(&craft);
+    }
+
     let (opts, mdns_handle) = if let Some(addr) = args.to {
         (SendOptions::Connect(addr), None)
     } else {
@@ -197,6 +214,10 @@ fn cmd_receive(args: ReceiveArgs) -> Result<()> {
         Some(_) => None,
         None => Some(detect_ksp_install()?),
     };
+
+    if let Some(ticket) = args.ticket.as_deref() {
+        return cmd_receive_p2p(ticket, args.out.clone(), install, args.yes);
+    }
 
     // Resolution order:
     //   1. explicit --from <addr>          → dial out
@@ -282,6 +303,76 @@ fn print_share(share: &mdns::AnnouncedShare) {
         "Found \"{name}\" [{ship}, {size}] on {addr}",
         addr = share.addr
     );
+}
+
+#[cfg(feature = "p2p")]
+fn cmd_send_p2p(craft: &CraftFile) -> Result<()> {
+    use crate::engine::quic::{bind_p2p, send_blueprint_quic};
+    use crate::transport::p2p::PeerTicket;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| Error::Protocol(format!("p2p runtime: {err}")))?;
+    runtime.block_on(async move {
+        let (endpoint, addr) = bind_p2p().await?;
+        let ticket = PeerTicket::from_addr(&addr).encode();
+        println!(
+            "iroh endpoint online — share this ticket with the receiver:\n  {ticket}\n\nWaiting for an inbound connection (Ctrl-C to cancel)…"
+        );
+        let result = send_blueprint_quic(&endpoint, craft).await;
+        endpoint.close().await;
+        result
+    })
+}
+
+#[cfg(not(feature = "p2p"))]
+fn cmd_send_p2p(_craft: &CraftFile) -> Result<()> {
+    Err(Error::Protocol(
+        "this build was compiled without `--features p2p`; rebuild with QUIC support to use --p2p"
+            .into(),
+    ))
+}
+
+#[cfg(feature = "p2p")]
+fn cmd_receive_p2p(
+    ticket: &str,
+    output_dir: Option<PathBuf>,
+    install: Option<KspInstall>,
+    auto_accept: bool,
+) -> Result<()> {
+    use crate::engine::quic::{bind_p2p_dialer, receive_blueprint_quic, QuicReceiveOptions};
+    use crate::transport::p2p::PeerTicket;
+
+    let peer = PeerTicket::decode(ticket)?.to_addr();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| Error::Protocol(format!("p2p runtime: {err}")))?;
+    runtime.block_on(async move {
+        let endpoint = bind_p2p_dialer().await?;
+        let opts = QuicReceiveOptions {
+            output_dir,
+            ksp_install: install,
+            auto_accept,
+        };
+        let result = receive_blueprint_quic(&endpoint, peer, &opts).await;
+        endpoint.close().await;
+        result
+    })
+}
+
+#[cfg(not(feature = "p2p"))]
+fn cmd_receive_p2p(
+    _ticket: &str,
+    _output_dir: Option<PathBuf>,
+    _install: Option<KspInstall>,
+    _auto_accept: bool,
+) -> Result<()> {
+    Err(Error::Protocol(
+        "this build was compiled without `--features p2p`; rebuild with QUIC support to use --ticket"
+            .into(),
+    ))
 }
 
 fn cmd_list(args: ListArgs) -> Result<()> {
