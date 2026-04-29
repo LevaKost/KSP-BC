@@ -5,4 +5,6 @@
 //! land alongside both in a follow-up.
 
 pub mod mdns;
+#[cfg(feature = "p2p")]
+pub mod p2p;
 pub mod tcp;

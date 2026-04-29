@@ -44,3 +44,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --verbose
       - run: cargo test --all --verbose
+
+  test-p2p:
+    # The QUIC P2P transport (iroh) pulls in tokio + ~200 transitive
+    # crates and requires Rust >= 1.89. We compile and test it on a
+    # single Linux runner to keep CI time bounded; the default-feature
+    # job above already covers the macOS/Windows matrix.
+    name: test (p2p feature)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --features p2p --verbose
+      - run: cargo test --features p2p --verbose

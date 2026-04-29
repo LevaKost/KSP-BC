@@ -1,6 +1,8 @@
 //! High-level send/receive orchestration.
 
 mod handshake;
+#[cfg(feature = "p2p")]
+pub mod quic;
 mod receiver;
 mod sender;
 

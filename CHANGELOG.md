@@ -7,6 +7,29 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- QUIC P2P transport via [iroh](https://crates.io/crates/iroh), behind
+  the optional `p2p` Cargo feature (default-off to keep build size
+  small).
+  - `ksp-share send --p2p` prints a peer ticket
+    (`ksp-share://<endpoint_id>?relay=...&direct=...`) and waits for
+    an inbound connection.
+  - `ksp-share receive --ticket <ticket>` dials it.
+  - NAT hole-punching is handled transparently; if direct UDP fails,
+    the connection seamlessly falls back to a public relay server.
+  - End-to-end encrypted via QUIC + TLS 1.3 with key pinning to the
+    sender's endpoint id.
+  - New module `src/transport/p2p.rs` (ALPN, ticket encode/decode,
+    framed bincode over QUIC streams).
+  - New module `src/engine/quic.rs` mirrors the existing TCP
+    sender/receiver flows on tokio + iroh.
+  - New `tests/quic_transfer.rs` smoke test (round-trips a craft file
+    between two iroh endpoints in the same process). Marked
+    `#[ignore]` because iroh's default preset reaches public relay
+    servers; run locally with
+    `cargo test --features p2p --test quic_transfer -- --ignored`.
+  - New CI job `test-p2p` builds and tests the feature on Linux.
+  - `docs/p2p.md` documents the ticket format, threat model and
+    relay-server caveats.
 - LAN auto-discovery via mDNS (`_ksp-share._tcp.local.`).
   - `ksp-share send` publishes a service record with the blueprint name,
     size, ship type, KSP version and protocol version in TXT records.
