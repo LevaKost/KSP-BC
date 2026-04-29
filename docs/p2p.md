@@ -41,6 +41,12 @@ This is a tiny, human-readable wrapper around an iroh `EndpointAddr`.
 You can paste it into chat / Discord / a QR code generator and it will
 round-trip cleanly.
 
+Field *values* (the relay URL and each direct address) are
+percent-encoded so that relay URLs containing reserved query
+characters (`&`, `=`, `?`, `#`, `+`, space) survive the round-trip.
+The unreserved set is `[A-Za-z0-9-._~:/]` per RFC 3986; everything
+else is `%XX`-escaped.
+
 ## Building with the P2P feature
 
 ```sh

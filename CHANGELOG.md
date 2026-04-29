@@ -6,6 +6,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `PeerTicket::encode` now percent-encodes field values, so relay URLs
+  containing reserved characters like `&`, `=` or `?` survive the
+  round-trip through `decode`. The on-the-wire format remains
+  backwards-compatible — tickets that don't need escaping look
+  identical to before. Regression covered by
+  `ticket_round_trip_relay_with_query_and_reserved_chars`.
+
 ### Added
 - QUIC P2P transport via [iroh](https://crates.io/crates/iroh), behind
   the optional `p2p` Cargo feature (default-off to keep build size
