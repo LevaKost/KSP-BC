@@ -210,8 +210,10 @@ fn resolve_target_path(meta: &CraftMetadata, opts: &ReceiveOptions) -> Result<Pa
             _ => install.vab_dir(),
         }
     };
-    dir.push(sanitize(&meta.name));
-    dir.set_extension("craft");
+    // Build the filename manually instead of using `set_extension`, which
+    // truncates everything after the last `.` in the stem (so a blueprint
+    // called "Rocket v2.0" would otherwise land as "Rocket v2.craft").
+    dir.push(format!("{}.craft", sanitize(&meta.name)));
     Ok(dir)
 }
 
