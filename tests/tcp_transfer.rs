@@ -15,6 +15,10 @@ fn local_addr(port: u16) -> SocketAddr {
     format!("127.0.0.1:{port}").parse().unwrap()
 }
 
+fn dial(addr: SocketAddr) -> SendOptions {
+    SendOptions::Connect(addr)
+}
+
 #[test]
 fn end_to_end_tcp_transfer_round_trip() {
     let workdir = TempDir::new().unwrap();
@@ -43,11 +47,7 @@ fn end_to_end_tcp_transfer_round_trip() {
     // Give the listener a moment to bind before the sender connects.
     thread::sleep(Duration::from_millis(100));
 
-    let send_opts = SendOptions {
-        bind: local_addr(0),
-        connect_to: Some(local_addr(port)),
-    };
-    send_blueprint(&craft, &send_opts).expect("sender failed");
+    send_blueprint(&craft, dial(local_addr(port))).expect("sender failed");
     recv_thread
         .join()
         .expect("recv panicked")
@@ -87,11 +87,7 @@ fn dotted_blueprint_name_keeps_full_stem() {
     let recv_thread = thread::spawn(move || receive_blueprint(&recv_opts));
     thread::sleep(Duration::from_millis(100));
 
-    let send_opts = SendOptions {
-        bind: local_addr(0),
-        connect_to: Some(local_addr(port)),
-    };
-    send_blueprint(&craft, &send_opts).expect("sender failed");
+    send_blueprint(&craft, dial(local_addr(port))).expect("sender failed");
     recv_thread
         .join()
         .expect("recv panicked")
