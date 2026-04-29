@@ -13,10 +13,10 @@ Receiver:  ksp-share receive --from <ip:port>
 No accounts, no cloud, no upload step — the file goes straight from one
 machine to another over TCP, with a SHA-256 integrity check at the end.
 
-This repository implements **stages 0–2** of the
-[project plan](./docs/protocol.md) (bootstrap, TCP MVP, KSP integration).
-Stages 3+ (LAN auto-discovery, QUIC P2P, GUI) are tracked in the
-[Roadmap](#roadmap) below.
+This repository implements **stages 0–3a** of the
+[project plan](./docs/protocol.md): bootstrap, TCP MVP, KSP integration
+and LAN auto-discovery via mDNS. Stages 3b+ (QUIC P2P with relay
+fallback, GUI) are tracked in the [Roadmap](#roadmap) below.
 
 ## Status
 
@@ -29,8 +29,8 @@ Stages 3+ (LAN auto-discovery, QUIC P2P, GUI) are tracked in the
 - [x] KSP install auto-detection (Steam + sensible fallbacks)
 - [x] `.craft` metadata parser for KSP1 and KSP2
 - [x] CI + cross-platform release pipeline
-- [ ] LAN mDNS auto-discovery (stage 3)
-- [ ] QUIC + relay P2P transport (stage 3)
+- [x] LAN mDNS auto-discovery (stage 3a)
+- [ ] QUIC + relay P2P transport (stage 3b)
 - [ ] GUI (stage 4)
 
 ## Install
@@ -69,13 +69,17 @@ ksp-share send /path/to/MyRocket.craft
 ksp-share send "Mun Rocket III" --to 192.168.1.5:7878
 ```
 
-By default `ksp-share send` binds `0.0.0.0:7878` and waits for the
-receiver to connect.
+By default `ksp-share send` binds `0.0.0.0:7878`, **publishes a
+`_ksp-share._tcp.local.` mDNS record on the LAN** and waits for the
+receiver to connect. Pass `--no-mdns` to suppress the announcement.
 
 ### Receiver
 
 ```sh
-# Connect to a sender that's listening.
+# LAN auto-discovery (default): browse for a sender via mDNS and dial it.
+ksp-share receive
+
+# Connect to a sender that's listening at a specific address.
 ksp-share receive --from 192.168.1.5:7878
 
 # Or wait for the sender to dial in.
@@ -96,6 +100,19 @@ ksp-share list
 ksp-share list --ship vab
 ```
 
+### Discovering peers on the LAN
+
+```sh
+# Browse for active senders for 5s and print what's announced.
+ksp-share discover
+
+# Watch continuously (Ctrl-C to stop).
+ksp-share discover --timeout 0
+```
+
+See [`docs/discovery.md`](./docs/discovery.md) for the service type,
+TXT record schema and tips on running mDNS through firewalls.
+
 ### Inspecting the detected install
 
 ```sh
@@ -111,7 +128,8 @@ Set the `KSP_ROOT` environment variable to override detection.
 | 0     | Bootstrap, license, README, CI                     | ✅ done      |
 | 1     | TCP MVP, SHA-256, progress bar                     | ✅ done      |
 | 2     | KSP install detector, `list`, send-by-name         | ✅ done      |
-| 3     | LAN mDNS, QUIC P2P, relay fallback                 | 🟡 planned  |
+| 3a    | LAN auto-discovery via mDNS                        | ✅ done      |
+| 3b    | QUIC P2P, relay fallback                           | 🟡 planned  |
 | 4     | GUI (`egui`/`eframe`), drag-and-drop               | 🟡 planned  |
 
 ## Contributing

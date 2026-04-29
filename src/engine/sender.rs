@@ -12,25 +12,33 @@ use crate::transport::tcp::{recv_frame, send_frame, tune};
 use crate::{Error, Result};
 
 /// Where the sender should accept (or initiate) the connection.
-#[derive(Debug, Clone)]
-pub struct SendOptions {
-    /// Address to bind on when running as a passive sender.
-    pub bind: SocketAddr,
-    /// When set, actively connect to this address instead of binding.
-    pub connect_to: Option<SocketAddr>,
+#[derive(Debug)]
+pub enum SendOptions {
+    /// Active sender: dial the receiver at this address.
+    Connect(SocketAddr),
+    /// Passive sender: accept on this already-bound listener. The
+    /// caller is responsible for announcing the listener's port — for
+    /// example via mDNS — before calling [`send_blueprint`].
+    Listen(TcpListener),
+}
+
+impl SendOptions {
+    /// Bind a listener on `bind` and wrap it as [`SendOptions::Listen`].
+    pub fn bind(bind: SocketAddr) -> Result<(Self, SocketAddr)> {
+        let listener = TcpListener::bind(bind)?;
+        let local = listener.local_addr()?;
+        Ok((SendOptions::Listen(listener), local))
+    }
 }
 
 /// Send a single craft file to one connecting/connected peer.
-pub fn send_blueprint(craft: &CraftFile, opts: &SendOptions) -> Result<()> {
-    let mut stream = match opts.connect_to {
-        Some(addr) => {
+pub fn send_blueprint(craft: &CraftFile, opts: SendOptions) -> Result<()> {
+    let mut stream = match opts {
+        SendOptions::Connect(addr) => {
             info!(target: "ksp_share::send", "Connecting to {addr}");
             TcpStream::connect(addr)?
         }
-        None => {
-            let listener = TcpListener::bind(opts.bind)?;
-            let local = listener.local_addr()?;
-            println!("Listening on {local} — share this address with the receiver");
+        SendOptions::Listen(listener) => {
             let (stream, peer) = listener.accept()?;
             info!(target: "ksp_share::send", "Accepted connection from {peer}");
             stream
