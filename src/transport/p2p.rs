@@ -84,19 +84,25 @@ impl PeerTicket {
 
     /// Human-readable single-line ticket. The format is
     /// `ksp-share://<id>?relay=<url>&direct=<addr>...`.
+    ///
+    /// Field *values* are percent-encoded so that relay URLs containing
+    /// reserved query characters (`&`, `=`, `?`, `#`, `+`, space) survive
+    /// the round-trip. The endpoint id and direct addresses don't
+    /// contain reserved characters in practice but go through the same
+    /// encoder for safety.
     pub fn encode(&self) -> String {
         let mut out = format!("ksp-share://{}", self.endpoint_id);
         let mut sep = '?';
         if let Some(relay) = &self.relay {
             out.push(sep);
             out.push_str("relay=");
-            out.push_str(relay.as_str());
+            out.push_str(&percent_encode(relay.as_str()));
             sep = '&';
         }
         for direct in &self.direct {
             out.push(sep);
             out.push_str("direct=");
-            out.push_str(&direct.to_string());
+            out.push_str(&percent_encode(&direct.to_string()));
             sep = '&';
         }
         out
@@ -120,10 +126,11 @@ impl PeerTicket {
                 let (k, v) = kv
                     .split_once('=')
                     .ok_or_else(|| Error::Protocol(format!("malformed ticket field: {kv}")))?;
+                let v = percent_decode(v)?;
                 match k {
                     "relay" => {
                         relay =
-                            Some(RelayUrl::from_str(v).map_err(|err| {
+                            Some(RelayUrl::from_str(&v).map_err(|err| {
                                 Error::Protocol(format!("invalid relay url: {err}"))
                             })?);
                     }
@@ -143,6 +150,73 @@ impl PeerTicket {
             relay,
             direct,
         })
+    }
+}
+
+/// Percent-encode every byte that isn't a "ticket-safe" character.
+///
+/// We deliberately keep the unreserved set small — `[A-Za-z0-9-._~]`,
+/// per RFC 3986 — plus `:` and `/` so URLs and `host:port` direct
+/// addresses stay readable. Everything else, including the query
+/// delimiters `&` and `=`, is encoded as `%XX`.
+fn percent_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        let safe =
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b':' | b'/');
+        if safe {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(hex_digit(byte >> 4));
+            out.push(hex_digit(byte & 0x0f));
+        }
+    }
+    out
+}
+
+/// Inverse of [`percent_encode`]. Accepts upper- or lower-case hex
+/// digits in `%XX` escapes and rejects invalid sequences.
+fn percent_decode(input: &str) -> Result<String> {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err(Error::Protocol(format!(
+                    "truncated percent-escape in ticket field `{input}`"
+                )));
+            }
+            let hi = hex_value(bytes[i + 1])?;
+            let lo = hex_value(bytes[i + 2])?;
+            out.push((hi << 4) | lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|err| Error::Protocol(format!("non-UTF8 percent-escape: {err}")))
+}
+
+fn hex_digit(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + nibble - 10) as char,
+        _ => unreachable!("nibble out of range"),
+    }
+}
+
+fn hex_value(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        other => Err(Error::Protocol(format!(
+            "invalid hex digit `{}` in percent-escape",
+            other as char
+        ))),
     }
 }
 
@@ -254,5 +328,54 @@ mod tests {
     #[test]
     fn ticket_decode_rejects_bad_prefix() {
         assert!(PeerTicket::decode("http://wrong/").is_err());
+    }
+
+    #[test]
+    fn ticket_round_trip_relay_with_query_and_reserved_chars() {
+        // A relay URL whose own query string contains both `&` and `=`
+        // — exactly the case that broke the naive encoder.
+        let id = EndpointId::from_str(
+            "ce6db6f1d5b69cf1cb98ddc06f25f1bc7eb3a8b5a3a7e9b96fa6e3d2cc04a7f8",
+        )
+        .unwrap();
+        let relay_str = "https://relay.example/path?foo=1&bar=2";
+        let ticket = PeerTicket {
+            endpoint_id: id,
+            relay: Some(RelayUrl::from_str(relay_str).unwrap()),
+            direct: vec![std::net::SocketAddr::from((
+                Ipv4Addr::new(192, 168, 1, 5),
+                12345,
+            ))],
+        };
+        let encoded = ticket.encode();
+        // The reserved characters must have been escaped — otherwise
+        // decode() would have split the relay URL on `&` and choked on
+        // an unknown ticket field.
+        assert!(
+            !encoded.contains("foo=1&bar=2"),
+            "encoded ticket leaked reserved chars: {encoded}"
+        );
+        let decoded = PeerTicket::decode(&encoded).expect("decode round-trip");
+        assert_eq!(decoded.endpoint_id, ticket.endpoint_id);
+        assert_eq!(
+            decoded.relay.as_ref().map(|u| u.as_str().to_string()),
+            Some(relay_str.to_string())
+        );
+        assert_eq!(decoded.direct, ticket.direct);
+    }
+
+    #[test]
+    fn ticket_decode_rejects_truncated_percent_escape() {
+        let id = "ce6db6f1d5b69cf1cb98ddc06f25f1bc7eb3a8b5a3a7e9b96fa6e3d2cc04a7f8";
+        // `%2` is a half-finished escape — must be rejected, not silently dropped.
+        let bad = format!("ksp-share://{id}?direct=1.2.3.4%2");
+        assert!(PeerTicket::decode(&bad).is_err());
+    }
+
+    #[test]
+    fn ticket_decode_rejects_non_hex_percent_escape() {
+        let id = "ce6db6f1d5b69cf1cb98ddc06f25f1bc7eb3a8b5a3a7e9b96fa6e3d2cc04a7f8";
+        let bad = format!("ksp-share://{id}?direct=1.2.3.4%ZZ");
+        assert!(PeerTicket::decode(&bad).is_err());
     }
 }
